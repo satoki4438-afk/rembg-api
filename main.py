@@ -168,6 +168,22 @@ def serialize_replicate_output(value):
     return str(value)
 
 
+@app.get("/debug-replicate")
+def debug_replicate():
+    if not REPLICATE_API_TOKEN:
+        raise HTTPException(status_code=500, detail="REPLICATE_API_TOKEN not configured")
+    client = replicate.Client(api_token=REPLICATE_API_TOKEN)
+    try:
+        model = client.models.get("meta/sam-2")
+        latest = model.latest_version
+        return {
+            "model": f"{model.owner}/{model.name}",
+            "latest_version_id": latest.id if latest else None,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
+
+
 @app.post("/correct-mask")
 async def correct_mask(file: UploadFile = File(...)):
     if not REPLICATE_API_TOKEN:
