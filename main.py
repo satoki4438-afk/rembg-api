@@ -309,7 +309,13 @@ async def segment_select(file: UploadFile = File(...)):
     try:
         sam_output = client.run(
             "meta/sam-2:fe97b453a6455861e3bac769b441ca1f1086110da7466dbb65cf1eecfd60dc83",
-            input={"image": composite_uri},
+            input={
+                "image": composite_uri,
+                "points_per_side": 64,
+                "pred_iou_thresh": 0.5,
+                "stability_score_thresh": 0.85,
+                "min_mask_region_area": 0,
+            },
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
