@@ -36,7 +36,10 @@ def health():
 @app.post("/remove-bg")
 async def remove_bg(file: UploadFile = File(...)):
     input_bytes = await file.read()
-    output_bytes = remove(input_bytes, session=session)
+    try:
+        output_bytes = remove(input_bytes, session=session)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
     return Response(content=output_bytes, media_type="image/png")
 
 
