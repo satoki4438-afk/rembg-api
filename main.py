@@ -36,6 +36,16 @@ def health():
     return {"ok": True}
 
 
+@app.get("/sam2-schema")
+def sam2_schema():
+    if not REPLICATE_API_TOKEN:
+        raise HTTPException(status_code=500, detail="REPLICATE_API_TOKEN not configured")
+    client = replicate.Client(api_token=REPLICATE_API_TOKEN)
+    model = client.models.get("meta/sam-2")
+    version = model.versions.get("fe97b453a6455861e3bac769b441ca1f1086110da7466dbb65cf1eecfd60dc83")
+    return JSONResponse(content=version.openapi_schema)
+
+
 @app.post("/remove-bg")
 async def remove_bg(file: UploadFile = File(...)):
     input_bytes = await file.read()
