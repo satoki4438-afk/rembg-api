@@ -6,3 +6,4 @@ onnxruntime
 Pillow
 google-generativeai
 replicate
+requests

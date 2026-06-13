@@ -2,11 +2,14 @@ import os
 import io
 import json
 import base64
+import colorsys
+import numpy as np
+import requests
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.responses import Response, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from rembg import remove, new_session
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 import google.generativeai as genai
 import replicate
 
@@ -193,3 +196,143 @@ async def correct_mask(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
 
     return JSONResponse(content=serialize_replicate_output(output))
+
+
+SELECT_PROMPT = """あなたはプラモデル画像のセグメント選別AIです。
+
+入力：
+- 元画像（1枚目）
+- 元画像にSAM2で生成したセグメントを半透明色＋番号でオーバーレイした画像（2枚目）
+
+タスク：
+2枚目に表示されている番号付きセグメントそれぞれについて、
+プラモデル本体（パーツ・武器・台座を含む可動部）に属するか、
+背景（机・壁・床・影・反射等）に属するかを判定する。
+
+本体に属すると判断した番号を全てリストで返す。
+
+注意：
+- 透明・半透明なクリアパーツも本体として扱う
+- 影や反射は背景として扱う
+- 番号が読み取れない・対象が小さすぎて判断できない場合は除外してよい
+"""
+
+SELECT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "body_segment_ids": {
+            "type": "array",
+            "items": {"type": "integer"},
+        },
+    },
+    "required": ["body_segment_ids"],
+}
+
+OVERLAY_MIN_AREA_RATIO = 0.005
+OVERLAY_MAX_AREA_RATIO = 0.95
+OVERLAY_MAX_SEGMENTS = 40
+OVERLAY_ALPHA = 115
+
+
+def build_segment_overlay(original_bytes: bytes, mask_urls: list):
+    original = Image.open(io.BytesIO(original_bytes)).convert("RGBA")
+    w, h = original.size
+    total = w * h
+
+    candidates = []
+    for url in mask_urls:
+        resp = requests.get(url, timeout=30)
+        resp.raise_for_status()
+        mask_img = Image.open(io.BytesIO(resp.content)).convert("L").resize((w, h))
+        mask_np = np.array(mask_img) > 127
+        area = int(mask_np.sum())
+        if area == 0:
+            continue
+        ratio = area / total
+        if ratio < OVERLAY_MIN_AREA_RATIO or ratio > OVERLAY_MAX_AREA_RATIO:
+            continue
+        ys, xs = np.where(mask_np)
+        bbox = (int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max()))
+        candidates.append((area, url, mask_np, bbox))
+
+    candidates.sort(key=lambda c: c[0], reverse=True)
+    candidates = candidates[:OVERLAY_MAX_SEGMENTS]
+
+    try:
+        font = ImageFont.truetype("DejaVuSans-Bold.ttf", 32)
+    except Exception:
+        try:
+            font = ImageFont.load_default(size=32)
+        except TypeError:
+            font = ImageFont.load_default()
+
+    overlay = original.copy()
+    filtered_urls = []
+    for i, (area, url, mask_np, bbox) in enumerate(candidates, start=1):
+        hue = ((i - 1) * 0.37) % 1.0
+        r, g, b = [int(c * 255) for c in colorsys.hsv_to_rgb(hue, 0.85, 0.95)]
+        mask_img = Image.fromarray((mask_np * 255).astype(np.uint8), mode="L")
+        color_rgba = Image.new("RGBA", (w, h), (r, g, b, OVERLAY_ALPHA))
+        layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        layer.paste(color_rgba, (0, 0), mask_img)
+        overlay = Image.alpha_composite(overlay, layer)
+        filtered_urls.append(url)
+
+    draw = ImageDraw.Draw(overlay, "RGBA")
+    for i, (area, url, mask_np, bbox) in enumerate(candidates, start=1):
+        cx = (bbox[0] + bbox[2]) // 2
+        cy = (bbox[1] + bbox[3]) // 2
+        draw.text((cx, cy), str(i), font=font, fill=(255, 255, 255, 255), stroke_width=3, stroke_fill=(0, 0, 0, 255), anchor="mm")
+
+    out = io.BytesIO()
+    overlay.convert("RGB").save(out, format="PNG")
+    return out.getvalue(), filtered_urls
+
+
+@app.post("/segment-select")
+async def segment_select(file: UploadFile = File(...)):
+    if not REPLICATE_API_TOKEN:
+        raise HTTPException(status_code=500, detail="REPLICATE_API_TOKEN not configured")
+    if not GEMINI_API_KEY:
+        raise HTTPException(status_code=500, detail="GEMINI_API_KEY not configured")
+
+    original_bytes = await file.read()
+    composite_uri = "data:image/png;base64," + base64.b64encode(original_bytes).decode("utf-8")
+
+    client = replicate.Client(api_token=REPLICATE_API_TOKEN)
+    try:
+        sam_output = client.run(
+            "meta/sam-2:fe97b453a6455861e3bac769b441ca1f1086110da7466dbb65cf1eecfd60dc83",
+            input={"image": composite_uri},
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
+
+    sam_output = serialize_replicate_output(sam_output)
+    mask_urls = sam_output.get("individual_masks", [])
+    if not mask_urls:
+        return JSONResponse(content={"masks": [], "selected_indices": []})
+
+    try:
+        overlay_bytes, filtered_urls = build_segment_overlay(original_bytes, mask_urls)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
+
+    model = genai.GenerativeModel("gemini-2.5-flash-lite")
+    try:
+        response = model.generate_content(
+            [
+                SELECT_PROMPT,
+                {"mime_type": "image/png", "data": original_bytes},
+                {"mime_type": "image/png", "data": overlay_bytes},
+            ],
+            generation_config=genai.GenerationConfig(
+                response_mime_type="application/json",
+                response_schema=SELECT_SCHEMA,
+            ),
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
+
+    result = json.loads(response.text)
+    return JSONResponse(content={"masks": filtered_urls, "selected_indices": result.get("body_segment_ids", [])})
