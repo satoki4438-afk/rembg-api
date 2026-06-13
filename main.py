@@ -258,6 +258,12 @@ def build_segment_overlay(original_bytes: bytes, mask_urls: list):
     candidates.sort(key=lambda c: c[0], reverse=True)
     candidates = candidates[:OVERLAY_MAX_SEGMENTS]
 
+    debug_info = {
+        "raw_count": len(mask_urls),
+        "passed_count": len(candidates),
+        "passed_ratios": [round(c[0] / total, 4) for c in candidates],
+    }
+
     try:
         font = ImageFont.truetype("DejaVuSans-Bold.ttf", 32)
     except Exception:
@@ -286,7 +292,7 @@ def build_segment_overlay(original_bytes: bytes, mask_urls: list):
 
     out = io.BytesIO()
     overlay.convert("RGB").save(out, format="PNG")
-    return out.getvalue(), filtered_urls
+    return out.getvalue(), filtered_urls, debug_info
 
 
 @app.post("/segment-select")
@@ -311,10 +317,10 @@ async def segment_select(file: UploadFile = File(...)):
     sam_output = serialize_replicate_output(sam_output)
     mask_urls = sam_output.get("individual_masks", [])
     if not mask_urls:
-        return JSONResponse(content={"masks": [], "selected_indices": []})
+        return JSONResponse(content={"masks": [], "selected_indices": [], "debug": {"raw_count": 0, "passed_count": 0, "passed_ratios": []}})
 
     try:
-        overlay_bytes, filtered_urls = build_segment_overlay(original_bytes, mask_urls)
+        overlay_bytes, filtered_urls, debug_info = build_segment_overlay(original_bytes, mask_urls)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
 
@@ -335,4 +341,4 @@ async def segment_select(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
 
     result = json.loads(response.text)
-    return JSONResponse(content={"masks": filtered_urls, "selected_indices": result.get("body_segment_ids", [])})
+    return JSONResponse(content={"masks": filtered_urls, "selected_indices": result.get("body_segment_ids", []), "debug": debug_info})
