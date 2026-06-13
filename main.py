@@ -140,17 +140,20 @@ async def audit_mask(original: UploadFile = File(...), transparent: UploadFile =
     checkerboard_bytes = make_checkerboard_composite(transparent_bytes)
 
     model = genai.GenerativeModel("gemini-2.5-flash-lite")
-    response = model.generate_content(
-        [
-            AUDIT_PROMPT,
-            {"mime_type": "image/png", "data": original_bytes},
-            {"mime_type": "image/png", "data": checkerboard_bytes},
-        ],
-        generation_config=genai.GenerationConfig(
-            response_mime_type="application/json",
-            response_schema=AUDIT_SCHEMA,
-        ),
-    )
+    try:
+        response = model.generate_content(
+            [
+                AUDIT_PROMPT,
+                {"mime_type": "image/png", "data": original_bytes},
+                {"mime_type": "image/png", "data": checkerboard_bytes},
+            ],
+            generation_config=genai.GenerationConfig(
+                response_mime_type="application/json",
+                response_schema=AUDIT_SCHEMA,
+            ),
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
 
     return JSONResponse(content=json.loads(response.text))
 
@@ -164,9 +167,12 @@ async def correct_mask(file: UploadFile = File(...)):
     composite_uri = "data:image/png;base64," + base64.b64encode(input_bytes).decode("utf-8")
 
     client = replicate.Client(api_token=REPLICATE_API_TOKEN)
-    output = client.run(
-        "meta/sam-2",
-        input={"image": composite_uri},
-    )
+    try:
+        output = client.run(
+            "meta/sam-2",
+            input={"image": composite_uri},
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
 
     return JSONResponse(content=output)
