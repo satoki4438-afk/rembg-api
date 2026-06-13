@@ -158,6 +158,16 @@ async def audit_mask(original: UploadFile = File(...), transparent: UploadFile =
     return JSONResponse(content=json.loads(response.text))
 
 
+def serialize_replicate_output(value):
+    if isinstance(value, dict):
+        return {k: serialize_replicate_output(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [serialize_replicate_output(v) for v in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)
+
+
 @app.post("/correct-mask")
 async def correct_mask(file: UploadFile = File(...)):
     if not REPLICATE_API_TOKEN:
@@ -169,10 +179,10 @@ async def correct_mask(file: UploadFile = File(...)):
     client = replicate.Client(api_token=REPLICATE_API_TOKEN)
     try:
         output = client.run(
-            "meta/sam-2",
+            "meta/sam-2:cbd95fb76192174268b6b303aeeb7a736e8dab0cbc38177f09db79b2299da30b",
             input={"image": composite_uri},
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
 
-    return JSONResponse(content=output)
+    return JSONResponse(content=serialize_replicate_output(output))
