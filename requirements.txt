@@ -1,9 +1,9 @@
 fastapi
 uvicorn
 python-multipart
-rembg
-onnxruntime
 Pillow
-google-generativeai
+numpy
 replicate
 requests
+imageio
+imageio-ffmpeg
