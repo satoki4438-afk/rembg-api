@@ -37,12 +37,12 @@ def health():
 
 
 @app.get("/sam2-schema")
-def sam2_schema():
+def sam2_schema(model_name: str = "meta/sam-2", version_id: str = "fe97b453a6455861e3bac769b441ca1f1086110da7466dbb65cf1eecfd60dc83"):
     if not REPLICATE_API_TOKEN:
         raise HTTPException(status_code=500, detail="REPLICATE_API_TOKEN not configured")
     client = replicate.Client(api_token=REPLICATE_API_TOKEN)
-    model = client.models.get("meta/sam-2")
-    version = model.versions.get("fe97b453a6455861e3bac769b441ca1f1086110da7466dbb65cf1eecfd60dc83")
+    model = client.models.get(model_name)
+    version = model.versions.get(version_id)
     return JSONResponse(content=version.openapi_schema)
 
 
