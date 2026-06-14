@@ -190,7 +190,7 @@ async def audit_cutout(file: UploadFile = File(...), cutout_base64: str = Form(.
 
     genai.configure(api_key=GEMINI_API_KEY)
     model = genai.GenerativeModel(
-        "gemini-2.0-flash",
+        "gemini-2.5-flash",
         generation_config={
             "response_mime_type": "application/json",
             "response_schema": AUDIT_RESPONSE_SCHEMA,
