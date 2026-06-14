@@ -147,5 +147,5 @@ async def sam2_click(file: UploadFile = File(...), points: str = Form(...)):
         "png_base64": base64.b64encode(out_buf.getvalue()).decode("utf-8"),
         "width": w,
         "height": h,
-        "debug": {"mask_url": urls[0], "raw_type": type(serialized).__name__},
+        "debug": {"mask_url": urls[0], "raw_type": type(serialized).__name__, "all_urls": urls, "raw": serialized},
     })
