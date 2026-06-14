@@ -119,6 +119,9 @@ async def sam2_click(file: UploadFile = File(...), points: str = Form(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
 
+    if not isinstance(output, (str, bytes, dict, list)) and hasattr(output, "__iter__"):
+        output = list(output)
+
     serialized = serialize_replicate_output(output)
 
     urls = []
