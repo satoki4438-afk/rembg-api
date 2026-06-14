@@ -7,3 +7,4 @@ replicate
 requests
 imageio
 imageio-ffmpeg
+google-generativeai

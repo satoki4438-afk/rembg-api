@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
 import replicate
+import google.generativeai as genai
 
 app = FastAPI()
 
@@ -22,8 +23,30 @@ app.add_middleware(
 )
 
 REPLICATE_API_TOKEN = os.environ.get("REPLICATE_API_TOKEN")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 SAM2_VIDEO_MODEL = "meta/sam-2-video:33432afdfc06a10da6b4018932893d39b0159f838b6d11dd1236dff85cc5ec1d"
+
+AUDIT_RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "status": {"type": "string", "enum": ["ok", "partial", "failed"]},
+        "foreground_coverage": {"type": "number"},
+        "message": {"type": "string"},
+    },
+    "required": ["status", "foreground_coverage", "message"],
+}
+
+AUDIT_PROMPT = """1枚目はプラモデル/フィギュアの元画像、2枚目はAIで背景を切り抜いた結果(透過PNG)です。
+
+切り抜きが成功しているか判定してください。
+- ok: モデル全体がほぼ完全に切り抜けている
+- partial: 一部のパーツ(足だけ、上半身だけなど)しか切り抜けていない
+- failed: ほとんど何も切り抜けていない、または元画像と無関係なものが切り抜かれている
+
+foreground_coverageは、元画像に対して切り抜けたモデルの割合(0.0〜1.0)です。
+messageには判定理由を日本語で簡潔に書いてください。
+JSON形式で返してください。"""
 
 
 @app.get("/")
@@ -149,3 +172,35 @@ async def sam2_click(file: UploadFile = File(...), points: str = Form(...)):
         "height": h,
         "debug": {"mask_url": urls[0], "raw_type": type(serialized).__name__, "all_urls": urls, "raw": serialized},
     })
+
+
+@app.post("/audit-cutout")
+async def audit_cutout(file: UploadFile = File(...), cutout_base64: str = Form(...)):
+    if not GEMINI_API_KEY:
+        raise HTTPException(status_code=500, detail="GEMINI_API_KEY not configured")
+
+    original_bytes = await file.read()
+    original_img = Image.open(io.BytesIO(original_bytes)).convert("RGB")
+
+    try:
+        cutout_bytes = base64.b64decode(cutout_base64)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"invalid cutout_base64: {e}")
+    cutout_img = Image.open(io.BytesIO(cutout_bytes))
+
+    genai.configure(api_key=GEMINI_API_KEY)
+    model = genai.GenerativeModel(
+        "gemini-2.0-flash",
+        generation_config={
+            "response_mime_type": "application/json",
+            "response_schema": AUDIT_RESPONSE_SCHEMA,
+        },
+    )
+
+    try:
+        response = model.generate_content([AUDIT_PROMPT, original_img, cutout_img])
+        result = json.loads(response.text)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
+
+    return JSONResponse(content=result)
